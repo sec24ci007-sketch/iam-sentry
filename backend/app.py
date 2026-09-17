@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from backend.core.delta_engine import compute_permission_delta
+from backend.core.delta_engine import compute_permission_delta
+from backend.ai.bedrock_agent import generate_least_privilege_policy
 
 app = FastAPI(
     title="IAM-Sentry Control Plane API",
@@ -37,38 +39,24 @@ def analyze_role_drift(payload: AnalyzeRequest):
     Coordinates Delta Math Engine + Bedrock AI Agent.
     """
     try:
-        # 1. Real Math Engine Computation (Δ = Granted - Used)
+        # 1. Math Engine Computation (Δ = Granted - Used)
         delta_result = compute_permission_delta(
             payload.granted_policy, 
             payload.cloudtrail_events
         )
         
-        # 2. Temporary Bedrock AI Mock (Will connect to bedrock_agent.py next)
-        mock_ai_response = {
-            "risk_score": "CRITICAL_OVERPRIVILEGED" if delta_result["is_overprivileged"] else "LOW",
-            "explanation": f"Role '{payload.role_name}' has unused permissions flagged by the deterministic engine.",
-            "recommended_policy": {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Effect": "Allow",
-                        "Action": delta_result["used_actions"] if delta_result["used_actions"] else ["s3:GetObject"],
-                        "Resource": "*"
-                    }
-                ]
-            }
-        }
+        # 2. Bedrock AI Agent Recommendation Engine
+        ai_result = generate_least_privilege_policy(delta_result)
 
         return {
             "status": "success",
             "role_name": payload.role_name,
             "delta": delta_result,
-            "ai_analysis": mock_ai_response
+            "ai_analysis": ai_result
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/approve")
 def approve_and_apply_policy(payload: ApproveRequest):
     """
