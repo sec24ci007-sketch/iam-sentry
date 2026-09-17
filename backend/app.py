@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from backend.core.delta_engine import compute_permission_delta
 
 app = FastAPI(
     title="IAM-Sentry Control Plane API",
@@ -9,7 +10,7 @@ app = FastAPI(
 )
 
 # ------------------------------------------------------------------
-# Data Schemas (The Shared Contract Between All Teammates)
+# Data Schemas
 # ------------------------------------------------------------------
 
 class AnalyzeRequest(BaseModel):
@@ -33,34 +34,25 @@ def health_check():
 @app.post("/analyze")
 def analyze_role_drift(payload: AnalyzeRequest):
     """
-    Called by Dashboard / Seeding script.
     Coordinates Delta Math Engine + Bedrock AI Agent.
     """
     try:
-        # 1. Teammate 1's Hook: Run Deterministic Math Engine
-        # delta_result = compute_delta(payload.granted_policy, payload.cloudtrail_events)
+        # 1. Real Math Engine Computation (Δ = Granted - Used)
+        delta_result = compute_permission_delta(
+            payload.granted_policy, 
+            payload.cloudtrail_events
+        )
         
-        # Temporary Mock Data until Teammate 1 connects delta_engine.py
-        mock_delta = {
-            "total_granted_count": 45,
-            "total_used_count": 3,
-            "unused_actions": ["s3:DeleteBucket", "dynamodb:*", "sqs:*"],
-            "is_overprivileged": True
-        }
-
-        # 2. Teammate 2's Hook: Run Amazon Bedrock Risk Scoring & Policy Generator
-        # bedrock_result = generate_least_privilege_policy(mock_delta)
-        
-        # Temporary Mock Data until Teammate 2 connects bedrock_agent.py
+        # 2. Temporary Bedrock AI Mock (Will connect to bedrock_agent.py next)
         mock_ai_response = {
-            "risk_score": "CRITICAL_OVERPRIVILEGED",
-            "explanation": "Role is granted full admin access (*), but only called 3 S3 read actions in the last 7 days.",
+            "risk_score": "CRITICAL_OVERPRIVILEGED" if delta_result["is_overprivileged"] else "LOW",
+            "explanation": f"Role '{payload.role_name}' has unused permissions flagged by the deterministic engine.",
             "recommended_policy": {
                 "Version": "2012-10-17",
                 "Statement": [
                     {
                         "Effect": "Allow",
-                        "Action": ["s3:GetObject", "s3:ListBucket"],
+                        "Action": delta_result["used_actions"] if delta_result["used_actions"] else ["s3:GetObject"],
                         "Resource": "*"
                     }
                 ]
@@ -70,7 +62,7 @@ def analyze_role_drift(payload: AnalyzeRequest):
         return {
             "status": "success",
             "role_name": payload.role_name,
-            "delta": mock_delta,
+            "delta": delta_result,
             "ai_analysis": mock_ai_response
         }
 
@@ -81,9 +73,7 @@ def analyze_role_drift(payload: AnalyzeRequest):
 def approve_and_apply_policy(payload: ApproveRequest):
     """
     Triggered by 1-Click Approve button on Dashboard.
-    Applies minimal JSON policy to target AWS IAM role.
     """
-    # Teammate 3 hooks this up to update DynamoDB state & trigger AWS IAM apply
     return {
         "status": "REMEDIATED",
         "role_name": payload.role_name,
