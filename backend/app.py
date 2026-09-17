@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
-from backend.core.delta_engine import compute_permission_delta
+
 from backend.core.delta_engine import compute_permission_delta
 from backend.ai.bedrock_agent import generate_least_privilege_policy
 
@@ -9,6 +10,15 @@ app = FastAPI(
     title="IAM-Sentry Control Plane API",
     description="Backend API connecting Delta Engine, Bedrock AI, and Dashboard",
     version="1.0.0"
+)
+
+# Enable CORS for React Frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows requests from Vite dashboard on port 5173
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ------------------------------------------------------------------
@@ -30,22 +40,15 @@ class ApproveRequest(BaseModel):
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint for LocalStack / SAM testing."""
     return {"status": "online", "service": "IAM-Sentry Control Plane"}
 
 @app.post("/analyze")
 def analyze_role_drift(payload: AnalyzeRequest):
-    """
-    Coordinates Delta Math Engine + Bedrock AI Agent.
-    """
     try:
-        # 1. Math Engine Computation (Δ = Granted - Used)
         delta_result = compute_permission_delta(
             payload.granted_policy, 
             payload.cloudtrail_events
         )
-        
-        # 2. Bedrock AI Agent Recommendation Engine
         ai_result = generate_least_privilege_policy(delta_result)
 
         return {
@@ -54,14 +57,11 @@ def analyze_role_drift(payload: AnalyzeRequest):
             "delta": delta_result,
             "ai_analysis": ai_result
         }
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/approve")
 def approve_and_apply_policy(payload: ApproveRequest):
-    """
-    Triggered by 1-Click Approve button on Dashboard.
-    """
     return {
         "status": "REMEDIATED",
         "role_name": payload.role_name,
